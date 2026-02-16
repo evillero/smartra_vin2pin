@@ -293,7 +293,7 @@ void smartra_about_scene_on_enter(void* context) {
         0,
         128,
         64,
-        "Smartra VIN2PIN\nVersion 1.0\n\n"
+        "Smartra VIN2PIN\nVersion 2.0\n\n"
         "Extremely simple calculator\nfor SMARTRA2\nimmobilizer pins.\n"
         "Compatible with all\n"
         "Hyundai and Kia models\n"
