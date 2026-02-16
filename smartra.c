@@ -5,6 +5,9 @@
 #include <gui/modules/widget.h>
 #include <gui/modules/submenu.h>
 #include <gui/modules/text_input.h>
+#include <storage/storage.h>
+#include <loader/loader.h>         
+#include <toolbox/path.h>            
 #include <ctype.h>
 #include <stdlib.h>
 
@@ -46,6 +49,10 @@ typedef enum {
     SmartraVinInputSceneSaveEvent,
 } SmartraVinInputEvent;
 
+typedef enum {
+    SmartraPinMessageSceneSaveEvent,
+} SmartraPinMessageEvent;
+
 uint32_t calculate_smartra_pin(uint32_t last_six) {
     uint32_t output = last_six;
     for(int i = 0; i < 40; i++) {
@@ -74,6 +81,16 @@ void smartra_menu_callback(void* context, uint32_t index) {
         scene_manager_handle_custom_event(app->scene_manager, SmartraMainMenuSceneAboutEvent);
         break;
     }
+}
+
+
+static bool smartra_pin_message_input_callback(InputEvent* event, void* context) {
+    SmartraApp* app = context;
+    if(event->type == InputTypeShort && event->key == InputKeyOk) {
+        scene_manager_handle_custom_event(app->scene_manager, SmartraPinMessageSceneSaveEvent);
+        return true; 
+    }
+    return false; 
 }
 
 void smartra_main_menu_scene_on_enter(void* context) {
@@ -170,6 +187,44 @@ void smartra_vin_input_scene_on_exit(void* context) {
     UNUSED(context);
 }
 
+
+static void smartra_save_result(SmartraApp* app) {
+    const char* vin = app->vin;
+    int len = strlen(vin);
+    if(len != 17) return;
+
+    const char* last_six_ptr = vin + 11;
+    for(int i = 0; i < 6; i++) {
+        if(!isdigit((unsigned char)last_six_ptr[i])) return;
+    }
+
+    uint32_t last_six = atoi(last_six_ptr);
+    uint32_t pin = calculate_smartra_pin(last_six);
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+
+
+    const char* file_path = APP_DATA_PATH("results.txt");
+
+
+    FuriString* dir_path = furi_string_alloc();
+    path_extract_dirname(file_path, dir_path);
+    storage_common_mkdir(storage, furi_string_get_cstr(dir_path));
+    furi_string_free(dir_path);
+
+
+    File* file = storage_file_alloc(storage);
+    if(storage_file_open(file, file_path, FSAM_WRITE, FSOM_OPEN_APPEND)) {
+        FuriString* line = furi_string_alloc();
+        furi_string_printf(line, "VIN: %s, PIN: %06lu\n", vin, pin);
+        storage_file_write(file, furi_string_get_cstr(line), furi_string_size(line));
+        furi_string_free(line);
+        storage_file_close(file);
+    }
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+}
+
 void smartra_pin_message_scene_on_enter(void* context) {
     SmartraApp* app = context;
     widget_reset(app->widget);
@@ -179,6 +234,8 @@ void smartra_pin_message_scene_on_enter(void* context) {
     int len = strlen(vin);
     if(len != 17) {
         furi_string_printf(message, "Invalid VIN length!\nMust be 17 characters");
+        widget_add_string_multiline_element(
+            app->widget, 5, 30, AlignLeft, AlignCenter, FontSecondary, furi_string_get_cstr(message));
     } else {
         const char* last_six_ptr = vin + 11;
         bool all_digits = true;
@@ -191,23 +248,34 @@ void smartra_pin_message_scene_on_enter(void* context) {
 
         if(!all_digits) {
             furi_string_printf(message, "Last 6 must be digits!");
+            widget_add_string_multiline_element(
+                app->widget, 5, 30, AlignLeft, AlignCenter, FontSecondary, furi_string_get_cstr(message));
         } else {
             uint32_t last_six = atoi(last_six_ptr);
             uint32_t pin = calculate_smartra_pin(last_six);
             furi_string_printf(message, "VIN: %s\nPIN: %06lu", vin, pin);
+            widget_add_string_multiline_element(
+                app->widget, 5, 30, AlignLeft, AlignCenter, FontSecondary, furi_string_get_cstr(message));
         }
     }
 
-    widget_add_string_multiline_element(
-        app->widget, 5, 30, AlignLeft, AlignCenter, FontSecondary, furi_string_get_cstr(message));
     furi_string_free(message);
+
+    View* widget_view = widget_get_view(app->widget);
+    view_set_input_callback(widget_view, smartra_pin_message_input_callback);
+    view_set_context(widget_view, app);
+
     view_dispatcher_switch_to_view(app->view_dispatcher, SmartraWidgetView);
 }
 
 bool smartra_pin_message_scene_on_event(void* context, SceneManagerEvent event) {
-    UNUSED(context);
-    UNUSED(event);
-    return false;
+    SmartraApp* app = context;
+    bool consumed = false;
+    if(event.type == SceneManagerEventTypeCustom && event.event == SmartraPinMessageSceneSaveEvent) {
+        smartra_save_result(app);
+        consumed = true;
+    }
+    return consumed;
 }
 
 void smartra_pin_message_scene_on_exit(void* context) {
@@ -232,7 +300,8 @@ void smartra_about_scene_on_enter(void* context) {
         "with SMARTRA2\n\n"
         "Instructions:\n"
         "1. Enter full 17-digit VIN\n"
-        "2. Calculates security PIN\n\n"
+        "2. Calculates security PIN\n"
+        "3. Press OK to save result\n\n"
         "Warning:\n"
         "For educational purposes only\n\n"
         "Author: evillero\n"
